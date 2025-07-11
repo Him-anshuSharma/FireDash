@@ -252,28 +252,64 @@ def browse_firestore_collection(collection_ref, path="", db=None):
             console.print(panel)
             show_fields_table(data)
             show_subcollections_table(subcolls)
-            console.print("[bold][0][/bold] Go back")
-            try:
-                choice = int(input("Select a field to view or a subcollection to enter (or 0 to go back): "))
-            except ValueError:
-                console.print("Please enter a valid number.")
+            # Document action menu
+            action_table = Table(title="[bold blue]Document Actions[/bold blue]", show_header=False)
+            action_table.add_column("Key", style="bold magenta", width=4)
+            action_table.add_column("Action", style="bold")
+            action_table.add_row("A", "View/Edit Fields or Subcollections")
+            action_table.add_row("B", "Rename (copy to new ID)")
+            action_table.add_row("Q", "[Go back]")
+            console.print(action_table)
+            action_choice = input("Select an action: ").strip().upper()
+            if action_choice == "Q":
                 continue
-            if choice == 0:
-                continue
-            field_keys = list(data.keys()) if data else []
-            if 1 <= choice <= len(field_keys):
-                k = field_keys[choice-1]
-                v = data[k]
-                if is_basic_type(v):
-                    panel = Panel(f"[bold]{k}[/bold]: [green]{v}", title="Field Value", border_style="green")
-                    console.print(panel)
-                    input("Press Enter to continue...")
+            elif action_choice == "A":
+                # Existing field/subcollection navigation
+                field_keys = list(data.keys()) if data else []
+                show_fields_table(data)
+                show_subcollections_table(subcolls)
+                console.print("[bold][0][/bold] Go back")
+                try:
+                    choice = int(input("Select a field to view or a subcollection to enter (or 0 to go back): "))
+                except ValueError:
+                    console.print("Please enter a valid number.")
+                    continue
+                if choice == 0:
+                    continue
+                if 1 <= choice <= len(field_keys):
+                    k = field_keys[choice-1]
+                    v = data[k]
+                    if is_basic_type(v):
+                        panel = Panel(f"[bold]{k}[/bold]: [green]{v}", title="Field Value", border_style="green")
+                        console.print(panel)
+                        input("Press Enter to continue...")
+                    else:
+                        explore_data(v, path + f"/{k}")
+                elif subcolls and (len(field_keys) < choice <= len(field_keys) + len(subcolls)):
+                    subcoll_idx = choice - len(field_keys) - 1
+                    subcoll_ref = subcolls[subcoll_idx]
+                    browse_firestore_collection(subcoll_ref, path + f"/{doc.id}/{subcoll_ref.id}", db)
                 else:
-                    explore_data(v, path + f"/{k}")
-            elif subcolls and (len(field_keys) < choice <= len(field_keys) + len(subcolls)):
-                subcoll_idx = choice - len(field_keys) - 1
-                subcoll_ref = subcolls[subcoll_idx]
-                browse_firestore_collection(subcoll_ref, path + f"/{doc.id}/{subcoll_ref.id}", db)
+                    console.print("Invalid choice.")
+            elif action_choice == "B":
+                # Rename (copy to new ID)
+                new_id = input("Enter new document ID: ").strip()
+                if not new_id:
+                    console.print("[bold red]No ID entered. Rename cancelled.[/bold red]")
+                    continue
+                new_doc_ref = collection_ref.document(new_id)
+                if new_doc_ref.get().exists:
+                    console.print(f"[bold red]A document with ID '{new_id}' already exists.[/bold red]")
+                    continue
+                try:
+                    rename_document_with_subcollections(doc_ref, new_doc_ref)
+                    console.print(Panel(f"Document [bold]{doc.id}[/bold] successfully copied to [bold green]{new_id}[/bold green] (including all subcollections).", title="[bold green]Rename Success[/bold green]", border_style="green"))
+                    delete_original = input("Delete the original document? (y/N): ").strip().lower()
+                    if delete_original == 'y':
+                        doc_ref.delete()
+                        console.print(Panel(f"Original document [bold]{doc.id}[/bold] deleted.", title="[bold red]Deleted[/bold red]", border_style="red"))
+                except Exception as e:
+                    console.print(Panel(f"[bold red]Rename failed:[/bold red] {e}", title="[bold red]Error[/bold red]", border_style="red"))
             else:
                 console.print("Invalid choice.")
         else:
