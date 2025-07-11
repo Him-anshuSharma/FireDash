@@ -17,7 +17,7 @@ def print_rich_tree(data, label="root"):
             for i, item in enumerate(obj):
                 branch = tree.add(f"[cyan]- [{i}]")
                 add_to_tree(branch, item)
-        else:
+    else:
             tree.add(f"[green]{obj}")
     root = Tree(f"[bold magenta]{label}")
     add_to_tree(root, data)
