@@ -99,9 +99,9 @@ def setup_and_run():
                 console.print("[bold red]No collection name entered.[/bold red]")
                 continue
             # Create a dummy doc to initialize
-            dummy_doc_id = "__init__"
+            dummy_doc_id = "_init_"
             db.collection(new_coll_name).document(dummy_doc_id).set({"created": True})
-            db.collection(new_coll_name).document(dummy_doc_id).delete()  # Remove dummy
+            # Do NOT delete the dummy document, so the collection persists
             console.print(Panel(f"Collection [bold]{new_coll_name}[/bold] created.", title="[bold green]Success[/bold green]", border_style="green"))
             collections = list(db.collections())
         elif user_input == "B":

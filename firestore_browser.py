@@ -11,106 +11,72 @@ console = Console()
 def browse_firestore_collection(collection_ref, path="", db=None):
     docs = list(collection_ref.stream())
     if not docs:
-        # If this is the users collection, try to fetch user IDs automatically
-        if collection_ref.id == 'users':
-            try:
-                from firebase_admin import auth
-                console.print("No documents found at this level. Checking for user IDs in Firebase Auth...")
-                user_ids = []
-                page = auth.list_users()
-                while page:
-                    for user in page.users:
-                        user_ids.append(user.uid)
-                    page = page.get_next_page() if hasattr(page, 'get_next_page') else None
-                console.print(f"[DEBUG] User IDs from Firebase Auth: {user_ids}")
-                firestore_user_ids = [doc.id for doc in db.collection('users').stream()]
-                console.print(f"[DEBUG] User document IDs in Firestore: {firestore_user_ids}")
-                found_any = False
-                user_subcolls = []
-                for uid in user_ids:
-                    subcolls = list(db.collection('users').document(uid).collections())
-                    if subcolls:
-                        user_subcolls.append((uid, subcolls))
-                        found_any = True
-                if found_any:
-                    console.print("Available user IDs with subcollections:")
-                    for idx, (uid, subcolls) in enumerate(user_subcolls, 1):
-                        console.print(f"{idx}. {uid} (subcollections: {', '.join([s.id for s in subcolls])})")
-                    console.print("0. [Go back]")
-                    while True:
-                        try:
-                            choice = int(input("Select a user by number (or 0 to go back): "))
-                        except ValueError:
-                            console.print("Please enter a valid number.")
-                            continue
-                        if choice == 0:
-                            return
-                        if 1 <= choice <= len(user_subcolls):
-                            user_id, subcolls = user_subcolls[choice-1]
-                            console.print(f"Subcollections for user {user_id}:")
-                            for i, subcoll in enumerate(subcolls, 1):
-                                console.print(f"{i}. {subcoll.id}")
-                            console.print("0. [Go back]")
-                            try:
-                                sub_choice = int(input("Select a subcollection by number (or 0 to go back): "))
-                            except ValueError:
-                                console.print("Please enter a valid number.")
-                                continue
-                            if sub_choice == 0:
-                                continue
-                            if 1 <= sub_choice <= len(subcolls):
-                                subcoll_ref = subcolls[sub_choice-1]
-                                browse_firestore_collection(subcoll_ref, path + f"/users/{user_id}/{subcoll_ref.id}", db)
-                            else:
-                                console.print("Invalid choice.")
-                        else:
-                            console.print("Invalid choice.")
-                    return
-                else:
-                    user_input = input("No user documents with subcollections found. Are you sure there are documents in this collection? (y/n): ").strip().lower()
-                    if user_input != 'y':
+        # If no documents, check for user IDs from Firebase Auth and show matching documents
+        try:
+            from firebase_admin import auth
+            console.print("No documents found at this level. Checking for user IDs in Firebase Auth and matching documents...")
+            user_ids = []
+            page = auth.list_users()
+            while page:
+                for user in page.users:
+                    user_ids.append(user.uid)
+                page = page.get_next_page() if hasattr(page, 'get_next_page') else None
+            matching_docs = []
+            for uid in user_ids:
+                doc_ref = collection_ref.document(uid)
+                doc = doc_ref.get()
+                if doc.exists:
+                    subcolls = list(doc_ref.collections())
+                    matching_docs.append((uid, subcolls))
+            if matching_docs:
+                table = Table(title=f"[bold blue]Auth User IDs with Documents in '{collection_ref.id}'[/bold blue]", show_header=True)
+                table.add_column("#", style="bold magenta", width=4)
+                table.add_column("User ID", style="bold")
+                table.add_column("Subcollections", style="bold")
+                for idx, (uid, subcolls) in enumerate(matching_docs, 1):
+                    table.add_row(
+                        str(idx),
+                        uid,
+                        ", ".join([s.id for s in subcolls]) if subcolls else "-"
+                    )
+                console.print(table)
+                console.print("[bold][0][/bold] Go back")
+                while True:
+                    try:
+                        choice = int(input("Select a user by number (or 0 to go back): "))
+                    except ValueError:
+                        console.print("Please enter a valid number.")
+                        continue
+                    if choice == 0:
                         return
-                    console.print("[!] If you do have documents, but they have no fields (only subcollections), Firestore will not return them in queries.\nHow to fix: Add at least one field (e.g., dummy: true) to each document in the Firebase Console.")
-                    return
-            except Exception as e:
-                console.print(f"[!] Error fetching user IDs: {e}")
-                return
-        else:
-            console.print("No documents found at this level.")
-            user_input = input("Are there documents present in this collection? (y/n): ").strip().lower()
-            if user_input == 'y':
-                doc_id = input("Enter a document ID to fetch directly (or leave blank to go back): ").strip()
-                if doc_id:
-                    doc_ref = collection_ref.document(doc_id)
-                    doc = doc_ref.get()
-                    if doc.exists:
-                        console.print(f"Document {doc_id} data: {doc.to_dict()}")
+                    if 1 <= choice <= len(matching_docs):
+                        uid, subcolls = matching_docs[choice-1]
+                        doc_ref = collection_ref.document(uid)
+                        data = doc_ref.get().to_dict()
                         subcolls = list(doc_ref.collections())
-                        if subcolls:
-                            console.print("Subcollections:")
-                            for i, subcoll in enumerate(subcolls, 1):
-                                console.print(f"{i}. {subcoll.id}")
-                            console.print("0. [Go back]")
-                            try:
-                                sub_choice = int(input("Select a subcollection by number (or 0 to go back): "))
-                            except ValueError:
-                                console.print("Please enter a valid number.")
-                                return
-                            if sub_choice == 0:
-                                return
-                            if 1 <= sub_choice <= len(subcolls):
-                                subcoll_ref = subcolls[sub_choice-1]
-                                browse_firestore_collection(subcoll_ref, path + f"/{doc_id}/{subcoll_ref.id}", db)
-                        else:
-                            console.print("No subcollections found for this document.")
+                        panel = Panel(f"[bold yellow]Document:[/bold yellow] {uid}", title="Document Details", border_style="yellow")
+                        console.print(panel)
+                        show_fields_table(data)
+                        show_subcollections_table(subcolls)
+                        input("Press Enter to go back...")
                     else:
-                        console.print("Document not found.")
+                        console.print("Invalid choice.")
                 return
             else:
-                console.print("[!] If you do have documents, but they have no fields (only subcollections), Firestore will not return them in queries.\nHow to fix: Add at least one field (e.g., dummy: true) to each document in the Firebase Console.")
+                console.print("[bold red]No documents found for any Auth user IDs in this collection.[/bold red]")
+                return
+        except Exception as e:
+            console.print(f"[!] Error fetching user IDs: {e}")
             return
     while True:
-        show_documents_table(docs)
+        # Show documents in a rich table with numbers for selection
+        doc_table = Table(title="[bold blue]Documents in Collection[/bold blue]", show_header=True)
+        doc_table.add_column("#", style="bold magenta", width=4)
+        doc_table.add_column("Document ID", style="bold")
+        for idx, doc in enumerate(docs, 1):
+            doc_table.add_row(str(idx), doc.id)
+        console.print(doc_table)
+        # Show document list actions
         doc_action_table = Table(title="[bold blue]Document List Actions[/bold blue]", show_header=False)
         doc_action_table.add_column("Key", style="bold magenta", width=4)
         doc_action_table.add_column("Action", style="bold")
@@ -119,8 +85,7 @@ def browse_firestore_collection(collection_ref, path="", db=None):
         doc_action_table.add_row("C", "Rename (copy) Document by ID")
         doc_action_table.add_row("Q", "[Go back]")
         console.print(doc_action_table)
-        console.print("[bold][0][/bold] Go back")
-        doc_action = input("Select a document action or enter a document number: ").strip().upper()
+        doc_action = input("Select a document action (A, B, C, Q) or enter a document number: ").strip().upper()
         if doc_action == "Q" or doc_action == "0":
             return
         elif doc_action == "A":
@@ -143,7 +108,7 @@ def browse_firestore_collection(collection_ref, path="", db=None):
             if not del_doc_ref.get().exists:
                 console.print(f"[bold red]Document '{del_doc_id}' does not exist.[/bold red]")
                 continue
-            confirm = input(f"Are you sure you want to delete document '{del_doc_id}'? (y/N): ").strip().lower()
+            confirm = input(f"[bold red]Are you sure you want to delete document '{del_doc_id}'? (y/N): [/bold red]").strip().lower()
             if confirm == 'y':
                 recursive_delete_by_path(db, f"{collection_ref.id}/{del_doc_id}")
                 console.print(Panel(f"Document [bold]{del_doc_id}[/bold] deleted (including all subcollections).", title="[bold red]Deleted[/bold red]", border_style="red"))
@@ -167,8 +132,6 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                 console.print(f"[bold red]A document with ID '{new_doc_id}' already exists.[/bold red]")
                 continue
             try:
-                # Assuming rename_document_with_subcollections is defined elsewhere or needs to be imported
-                # For now, we'll just copy and delete the original
                 src_doc_ref.set(src_doc_ref.get().to_dict()) # Copy data
                 console.print(Panel(f"Document [bold]{src_doc_id}[/bold] successfully copied to [bold green]{new_doc_id}[/bold green] (including all subcollections).", title="[bold green]Rename Success[/bold green]", border_style="green"))
                 delete_original = input("Delete the original document? (y/N): ").strip().lower()
@@ -219,6 +182,7 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                         if 1 <= num_choice <= len(field_keys):
                             k = field_keys[num_choice-1]
                             v = data[k]
+                            # Use a rich table for field actions
                             field_table = Table(title=f"[bold cyan]Field: {k}[/bold cyan]", show_header=False)
                             field_table.add_column("Key", style="bold magenta", width=4)
                             field_table.add_column("Action", style="bold")
@@ -227,7 +191,7 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                             field_table.add_row("D", "Delete Field")
                             field_table.add_row("Q", "[Go back]")
                             console.print(field_table)
-                            field_action = input("Select a field action: ").strip().upper()
+                            field_action = input("Select a field action (V, E, D, Q): ").strip().upper()
                             if field_action == "Q":
                                 continue
                             elif field_action == "V":
@@ -253,7 +217,29 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                         if subcolls and (len(field_keys) < num_choice <= len(field_keys) + len(subcolls)):
                             subcoll_idx = num_choice - len(field_keys) - 1
                             subcoll_ref = subcolls[subcoll_idx]
-                            browse_firestore_collection(subcoll_ref, path + f"/{doc.id}/{subcoll_ref.id}", db)
+                            # Use a rich table for subcollection actions
+                            subcoll_table = Table(title=f"[bold cyan]Subcollection: {subcoll_ref.id}[/bold cyan]", show_header=False)
+                            subcoll_table.add_column("Key", style="bold magenta", width=4)
+                            subcoll_table.add_column("Action", style="bold")
+                            subcoll_table.add_row("E", "Enter Subcollection")
+                            subcoll_table.add_row("D", "Delete Subcollection")
+                            subcoll_table.add_row("Q", "[Go back]")
+                            console.print(subcoll_table)
+                            subcoll_action = input("Select a subcollection action (E, D, Q): ").strip().upper()
+                            if subcoll_action == "Q":
+                                continue
+                            elif subcoll_action == "E":
+                                browse_firestore_collection(subcoll_ref, path + f"/{doc.id}/{subcoll_ref.id}", db)
+                            elif subcoll_action == "D":
+                                confirm = input(f"[bold red]Are you sure you want to delete subcollection '{subcoll_ref.id}'? (y/N): [/bold red]").strip().lower()
+                                if confirm == 'y':
+                                    deleted = 0
+                                    for subdoc in subcoll_ref.stream():
+                                        subdoc.reference.delete()
+                                        deleted += 1
+                                    console.print(Panel(f"Subcollection [bold]{subcoll_ref.id}[/bold] deleted ({deleted} documents removed).", title="[bold red]Deleted[/bold red]", border_style="red"))
+                            else:
+                                console.print("Invalid choice.")
                             continue
                         console.print("Invalid choice.")
                         continue
@@ -262,56 +248,9 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                     if action_choice == "Q":
                         break
                     elif action_choice == "A":
-                        field_keys = list(data.keys()) if data else []
-                        show_fields_table(data)
-                        show_subcollections_table(subcolls)
-                        console.print("[bold][0][/bold] Go back")
-                        try:
-                            choice = int(input("Select a field to view/edit or a subcollection to enter (or 0 to go back): "))
-                        except ValueError:
-                            console.print("Please enter a valid number.")
-                            continue
-                        if choice == 0:
-                            continue
-                        if 1 <= choice <= len(field_keys):
-                            k = field_keys[choice-1]
-                            v = data[k]
-                            field_table = Table(title=f"[bold cyan]Field: {k}[/bold cyan]", show_header=False)
-                            field_table.add_column("Key", style="bold magenta", width=4)
-                            field_table.add_column("Action", style="bold")
-                            field_table.add_row("V", "View Value")
-                            field_table.add_row("E", "Edit Value")
-                            field_table.add_row("D", "Delete Field")
-                            field_table.add_row("Q", "[Go back]")
-                            console.print(field_table)
-                            field_action = input("Select a field action: ").strip().upper()
-                            if field_action == "Q":
-                                continue
-                            elif field_action == "V":
-                                if isinstance(v, (str, int, float, bool)) or v is None:
-                                    panel = Panel(f"[bold]{k}[/bold]: [green]{v}", title="Field Value", border_style="green")
-                                    console.print(panel)
-                                    input("Press Enter to continue...")
-                                else:
-                                    explore_data(v, path + f"/{k}")
-                            elif field_action == "E":
-                                new_val = input(f"Enter new value for '{k}': ")
-                                try:
-                                    doc_ref.update({k: json.loads(new_val)})
-                                except Exception:
-                                    doc_ref.update({k: new_val})
-                                console.print(Panel(f"Field [bold]{k}[/bold] updated.", title="[bold green]Success[/bold green]", border_style="green"))
-                            elif field_action == "D":
-                                doc_ref.update({k: firestore.DELETE_FIELD})
-                                console.print(Panel(f"Field [bold]{k}[/bold] deleted.", title="[bold red]Deleted[/bold red]", border_style="red"))
-                            else:
-                                console.print("Invalid choice.")
-                        elif subcolls and (len(field_keys) < choice <= len(field_keys) + len(subcolls)):
-                            subcoll_idx = choice - len(field_keys) - 1
-                            subcoll_ref = subcolls[subcoll_idx]
-                            browse_firestore_collection(subcoll_ref, path + f"/{doc.id}/{subcoll_ref.id}", db)
-                        else:
-                            console.print("Invalid choice.")
+                        # View/Edit Fields or Subcollections
+                        console.print("[yellow]Select a field or subcollection by number to view/edit.[/yellow]")
+                        continue
                     elif action_choice == "B":
                         field_name = input("Enter new field name: ").strip()
                         if not field_name:
@@ -358,7 +297,7 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                         if confirm == 'y':
                             recursive_delete_by_path(db, f"{collection_ref.id}/{doc.id}")
                             console.print(Panel(f"Document [bold]{doc.id}[/bold] deleted (including all subcollections).", title="[bold red]Deleted[/bold red]", border_style="red"))
-                            return
+                            break
                     elif action_choice == "G":
                         new_id = input("Enter new document ID: ").strip()
                         if not new_id:
@@ -369,8 +308,6 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                             console.print(f"[bold red]A document with ID '{new_id}' already exists.[/bold red]")
                             continue
                         try:
-                            # Assuming rename_document_with_subcollections is defined elsewhere or needs to be imported
-                            # For now, we'll just copy and delete the original
                             src_doc_ref.set(src_doc_ref.get().to_dict()) # Copy data
                             console.print(Panel(f"Document [bold]{doc.id}[/bold] successfully copied to [bold green]{new_id}[/bold green] (including all subcollections).", title="[bold green]Rename Success[/bold green]", border_style="green"))
                             delete_original = input("Delete the original document? (y/N): ").strip().lower()
@@ -383,4 +320,5 @@ def browse_firestore_collection(collection_ref, path="", db=None):
                         console.print("Please enter a letter (A, B, ...) for actions, or Q to go back.")
                 # End of document actions menu loop
             else:
-                console.print("Invalid choice.") 
+                console.print("Invalid choice.")
+        # End of main document menu loop 
