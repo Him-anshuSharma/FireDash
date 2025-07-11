@@ -1,0 +1,8 @@
+fastapi
+pydantic
+firebase-admin
+rich
+typer
+google-auth-oauthlib
+google-auth
+requests 
